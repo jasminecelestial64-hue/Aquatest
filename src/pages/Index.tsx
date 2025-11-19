@@ -7,6 +7,7 @@ import { CameraCapture } from "@/components/CameraCapture";
 import { TestResult, TestResultData } from "@/components/TestResult";
 import { TestHistory } from "@/components/TestHistory";
 import { TestCharts } from "@/components/TestCharts";
+import { CalibrationMode } from "@/components/CalibrationMode";
 import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
 import { useToast } from "@/hooks/use-toast";
 
@@ -15,6 +16,7 @@ const Index = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentResult, setCurrentResult] = useState<TestResultData | null>(null);
   const [testHistory, setTestHistory] = useState<TestResultData[]>([]);
+  const [showCalibration, setShowCalibration] = useState(false);
   const { toast } = useToast();
 
   const handleCapture = async (imageData: string) => {
@@ -78,6 +80,19 @@ const Index = () => {
     });
   };
 
+  if (showCalibration) {
+    return <CalibrationMode onClose={() => setShowCalibration(false)} />;
+  }
+
+  if (showCamera) {
+    return (
+      <CameraCapture
+        onCapture={handleCapture}
+        onClose={() => setShowCamera(false)}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background">
       {/* Header */}
@@ -93,7 +108,11 @@ const Index = () => {
                 <p className="text-xs text-muted-foreground">AI-Powered Ammonia Detection</p>
               </div>
             </div>
-            <Button variant="outline" size="icon">
+            <Button 
+              variant="outline" 
+              size="icon"
+              onClick={() => setShowCalibration(true)}
+            >
               <Settings className="h-5 w-5" />
             </Button>
           </div>
