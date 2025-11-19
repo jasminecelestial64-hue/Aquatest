@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CameraCapture } from "@/components/CameraCapture";
 import { TestResult, TestResultData } from "@/components/TestResult";
 import { TestHistory } from "@/components/TestHistory";
+import { TestCharts } from "@/components/TestCharts";
 import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
 import { useToast } from "@/hooks/use-toast";
 
@@ -217,7 +218,10 @@ const Index = () => {
 
             {/* History Section */}
             {testHistory.length > 0 && (
-              <TestHistory tests={testHistory} onExport={handleExport} />
+              <>
+                <TestCharts tests={testHistory} />
+                <TestHistory tests={testHistory} onExport={handleExport} />
+              </>
             )}
 
             {/* Info Cards */}
