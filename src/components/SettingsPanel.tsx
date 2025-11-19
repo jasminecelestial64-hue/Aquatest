@@ -1,13 +1,16 @@
 import { useState, useEffect } from "react";
-import { X, Save, AlertCircle, CheckCircle2 } from "lucide-react";
+import { X, Save, AlertCircle, CheckCircle2, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Separator } from "@/components/ui/separator";
 import { setRoboflowConfig, isConfigured, getRoboflowConfig } from "@/utils/roboflowService";
+import { setTestStripExpiration, getTestStripInfo, clearTestStripExpiration } from "@/utils/testStripService";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
+import { format } from "date-fns";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -21,7 +24,8 @@ const configSchema = z.object({
 export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
   const [apiKey, setApiKey] = useState("");
   const [modelEndpoint, setModelEndpoint] = useState("");
-  const [errors, setErrors] = useState<{ apiKey?: string; modelEndpoint?: string }>({});
+  const [expirationDate, setExpirationDate] = useState("");
+  const [errors, setErrors] = useState<{ apiKey?: string; modelEndpoint?: string; expirationDate?: string }>({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -29,6 +33,12 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
     if (config) {
       setApiKey(config.apiKey);
       setModelEndpoint(config.modelEndpoint);
+    }
+
+    const stripInfo = getTestStripInfo();
+    if (stripInfo) {
+      const date = new Date(stripInfo.expirationDate);
+      setExpirationDate(format(date, "yyyy-MM-dd"));
     }
   }, []);
 
@@ -61,6 +71,37 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
     });
 
     onClose();
+  };
+
+  const handleSaveExpiration = () => {
+    if (!expirationDate) {
+      setErrors({ ...errors, expirationDate: "Expiration date is required" });
+      return;
+    }
+
+    const date = new Date(expirationDate);
+    if (date < new Date()) {
+      setErrors({ ...errors, expirationDate: "Expiration date cannot be in the past" });
+      return;
+    }
+
+    setTestStripExpiration(date);
+    setErrors({ ...errors, expirationDate: undefined });
+
+    toast({
+      title: "Expiration Date Saved",
+      description: `Test strips will expire on ${format(date, "MMM dd, yyyy")}`,
+    });
+  };
+
+  const handleClearExpiration = () => {
+    setExpirationDate("");
+    clearTestStripExpiration();
+    
+    toast({
+      title: "Expiration Date Cleared",
+      description: "Test strip tracking has been reset.",
+    });
   };
 
   const handleClear = () => {
@@ -165,6 +206,55 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
             <Button onClick={handleClear} variant="outline">
               Clear
             </Button>
+          </div>
+
+          <Separator className="my-6" />
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-primary" />
+              <h3 className="text-lg font-semibold">Test Strip Expiration</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Track your test strip expiration date to ensure accurate results
+            </p>
+
+            <div className="space-y-2">
+              <Label htmlFor="expirationDate">Expiration Date</Label>
+              <Input
+                id="expirationDate"
+                type="date"
+                value={expirationDate}
+                onChange={(e) => {
+                  setExpirationDate(e.target.value);
+                  setErrors({ ...errors, expirationDate: undefined });
+                }}
+                min={format(new Date(), "yyyy-MM-dd")}
+                className={errors.expirationDate ? "border-destructive" : ""}
+              />
+              {errors.expirationDate && (
+                <p className="text-sm text-destructive">{errors.expirationDate}</p>
+              )}
+              {expirationDate && !errors.expirationDate && (
+                <p className="text-sm text-muted-foreground">
+                  Expires on {format(new Date(expirationDate), "MMMM dd, yyyy")}
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSaveExpiration} className="flex-1">
+                <Save className="mr-2 h-4 w-4" />
+                Save Expiration Date
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleClearExpiration}
+                disabled={!expirationDate}
+              >
+                Clear
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

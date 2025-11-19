@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Camera, Settings, History, Info } from "lucide-react";
+import { Camera, Settings, History, Info, AlertTriangle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CameraCapture } from "@/components/CameraCapture";
 import { TestResult, TestResultData } from "@/components/TestResult";
@@ -10,7 +11,9 @@ import { TestCharts } from "@/components/TestCharts";
 import { CalibrationMode } from "@/components/CalibrationMode";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
+import { isTestStripExpired, isTestStripExpiringSoon, getDaysUntilExpiration, getTestStripInfo } from "@/utils/testStripService";
 import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
 
 const Index = () => {
   const [showCamera, setShowCamera] = useState(false);
@@ -23,6 +26,17 @@ const Index = () => {
 
   const handleCapture = async (imageData: string) => {
     setShowCamera(false);
+    
+    // Check test strip expiration before analyzing
+    if (isTestStripExpired()) {
+      toast({
+        title: "Test Strips Expired",
+        description: "Your test strips have expired. Please replace them for accurate results.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setIsAnalyzing(true);
 
     try {
@@ -104,6 +118,37 @@ const Index = () => {
       {/* Header */}
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4">
+          {/* Test Strip Expiration Warnings */}
+          {isTestStripExpired() && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Test Strips Expired</AlertTitle>
+              <AlertDescription>
+                Your test strips expired on {getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}. 
+                Please replace them for accurate results. 
+                <Button 
+                  variant="link" 
+                  className="p-0 h-auto ml-1 text-destructive underline" 
+                  onClick={() => setShowSettings(true)}
+                >
+                  Update expiration date
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {!isTestStripExpired() && isTestStripExpiringSoon() && (
+            <Alert className="mb-4 border-amber-500/50 bg-amber-500/10">
+              <Clock className="h-4 w-4 text-amber-500" />
+              <AlertTitle className="text-amber-500">Test Strips Expiring Soon</AlertTitle>
+              <AlertDescription className="text-amber-600">
+                Your test strips will expire in {getDaysUntilExpiration()} day{getDaysUntilExpiration() !== 1 ? 's' : ''} 
+                ({getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}). 
+                Consider ordering replacements.
+              </AlertDescription>
+            </Alert>
+          )}
+          
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-ocean flex items-center justify-center">
