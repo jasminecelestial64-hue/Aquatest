@@ -24,15 +24,44 @@ interface RoboflowResponse {
   };
 }
 
-// This will be replaced with actual config from user
+const ROBOFLOW_CONFIG_KEY = "aquatest_roboflow_config";
+
+// Load config from localStorage on init
 let roboflowConfig: RoboflowConfig | null = null;
+
+const loadConfigFromStorage = () => {
+  try {
+    const stored = localStorage.getItem(ROBOFLOW_CONFIG_KEY);
+    if (stored) {
+      roboflowConfig = JSON.parse(stored);
+    }
+  } catch (error) {
+    console.error("Failed to load Roboflow config:", error);
+  }
+};
+
+// Initialize config on module load
+loadConfigFromStorage();
 
 export const setRoboflowConfig = (config: RoboflowConfig) => {
   roboflowConfig = config;
+  try {
+    if (config.apiKey && config.modelEndpoint) {
+      localStorage.setItem(ROBOFLOW_CONFIG_KEY, JSON.stringify(config));
+    } else {
+      localStorage.removeItem(ROBOFLOW_CONFIG_KEY);
+    }
+  } catch (error) {
+    console.error("Failed to save Roboflow config:", error);
+  }
+};
+
+export const getRoboflowConfig = (): RoboflowConfig | null => {
+  return roboflowConfig;
 };
 
 export const isConfigured = () => {
-  return roboflowConfig !== null && roboflowConfig.apiKey !== "";
+  return roboflowConfig !== null && roboflowConfig.apiKey !== "" && roboflowConfig.modelEndpoint !== "";
 };
 
 /**
