@@ -8,6 +8,7 @@ import { TestResult, TestResultData } from "@/components/TestResult";
 import { TestHistory } from "@/components/TestHistory";
 import { TestCharts } from "@/components/TestCharts";
 import { CalibrationMode } from "@/components/CalibrationMode";
+import { SettingsPanel } from "@/components/SettingsPanel";
 import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
 import { useToast } from "@/hooks/use-toast";
 
@@ -17,6 +18,7 @@ const Index = () => {
   const [currentResult, setCurrentResult] = useState<TestResultData | null>(null);
   const [testHistory, setTestHistory] = useState<TestResultData[]>([]);
   const [showCalibration, setShowCalibration] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const { toast } = useToast();
 
   const handleCapture = async (imageData: string) => {
@@ -80,6 +82,10 @@ const Index = () => {
     });
   };
 
+  if (showSettings) {
+    return <SettingsPanel onClose={() => setShowSettings(false)} />;
+  }
+
   if (showCalibration) {
     return <CalibrationMode onClose={() => setShowCalibration(false)} />;
   }
@@ -111,7 +117,7 @@ const Index = () => {
             <Button 
               variant="outline" 
               size="icon"
-              onClick={() => setShowCalibration(true)}
+              onClick={() => setShowSettings(true)}
             >
               <Settings className="h-5 w-5" />
             </Button>
@@ -230,6 +236,16 @@ const Index = () => {
                   >
                     <Camera className="mr-2 h-5 w-5" />
                     Start New Test
+                  </Button>
+                  
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={() => setShowCalibration(true)}
+                    className="w-full"
+                  >
+                    <Settings className="mr-2 h-5 w-5" />
+                    Calibration Mode
                   </Button>
                 </div>
               </CardContent>
