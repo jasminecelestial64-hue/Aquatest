@@ -1,4 +1,5 @@
 import { AmmoniaLevel } from "@/components/TestResult";
+import { extractColorProfile, applyCalibration } from "./calibrationService";
 
 interface RoboflowConfig {
   apiKey: string;
@@ -74,7 +75,17 @@ export const analyzeImage = async (imageData: string): Promise<{
     const data: RoboflowResponse = await response.json();
 
     // Process predictions and convert to ammonia concentration
-    return processPredictions(data.predictions);
+    const result = processPredictions(data.predictions);
+    
+    // Apply calibration correction if available
+    const colorProfile = await extractColorProfile(imageData);
+    const calibratedConcentration = applyCalibration(result.concentration, colorProfile);
+    
+    return {
+      ...result,
+      concentration: calibratedConcentration,
+      level: concentrationToLevel(calibratedConcentration),
+    };
   } catch (error) {
     console.error("Error analyzing image:", error);
     throw error;
