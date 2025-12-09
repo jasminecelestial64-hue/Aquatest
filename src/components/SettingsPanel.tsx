@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Save, AlertCircle, CheckCircle2, Calendar } from "lucide-react";
+import { X, Save, AlertCircle, CheckCircle2, Calendar, Beaker } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +7,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { setRoboflowConfig, isConfigured, getRoboflowConfig } from "@/utils/roboflowService";
-import { setTestStripExpiration, getTestStripInfo, clearTestStripExpiration } from "@/utils/testStripService";
+import {
+  setTestStripExpiration,
+  getTestStripInfo,
+  clearTestStripExpiration,
+  setSolutionExpiration,
+  getSolutionInfo,
+  clearSolutionExpiration
+} from "@/utils/testStripService";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 import { format } from "date-fns";
@@ -25,7 +32,8 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
   const [apiKey, setApiKey] = useState("");
   const [modelEndpoint, setModelEndpoint] = useState("");
   const [expirationDate, setExpirationDate] = useState("");
-  const [errors, setErrors] = useState<{ apiKey?: string; modelEndpoint?: string; expirationDate?: string }>({});
+  const [solutionExpirationDate, setSolutionExpirationDate] = useState("");
+  const [errors, setErrors] = useState<{ apiKey?: string; modelEndpoint?: string; expirationDate?: string; solutionExpirationDate?: string }>({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -39,6 +47,12 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
     if (stripInfo) {
       const date = new Date(stripInfo.expirationDate);
       setExpirationDate(format(date, "yyyy-MM-dd"));
+    }
+
+    const solutionInfo = getSolutionInfo();
+    if (solutionInfo) {
+      const date = new Date(solutionInfo.expirationDate);
+      setSolutionExpirationDate(format(date, "yyyy-MM-dd"));
     }
   }, []);
 
@@ -97,10 +111,36 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
   const handleClearExpiration = () => {
     setExpirationDate("");
     clearTestStripExpiration();
-    
+
     toast({
       title: "Expiration Date Cleared",
       description: "Test strip tracking has been reset.",
+    });
+  };
+
+  const handleSaveSolutionExpiration = () => {
+    if (!solutionExpirationDate) {
+      setErrors({ ...errors, solutionExpirationDate: "Expiration date is required" });
+      return;
+    }
+
+    const date = new Date(solutionExpirationDate);
+    setSolutionExpiration(date);
+    setErrors({ ...errors, solutionExpirationDate: undefined });
+
+    toast({
+      title: "Solution Expiration Saved",
+      description: `Solution will expire on ${format(date, "MMM dd, yyyy")}`,
+    });
+  };
+
+  const handleClearSolutionExpiration = () => {
+    setSolutionExpirationDate("");
+    clearSolutionExpiration();
+
+    toast({
+      title: "Solution Expiration Cleared",
+      description: "Solution tracking has been reset.",
     });
   };
 
@@ -108,7 +148,7 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
     setApiKey("");
     setModelEndpoint("");
     setRoboflowConfig({ apiKey: "", modelEndpoint: "" });
-    
+
     toast({
       title: "Configuration Cleared",
       description: "Roboflow settings have been reset.",
@@ -251,6 +291,45 @@ export const SettingsPanel = ({ onClose }: SettingsPanelProps) => {
                 variant="outline"
                 onClick={handleClearExpiration}
                 disabled={!expirationDate}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+
+          <Separator className="my-6" />
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Beaker className="h-5 w-5 text-primary" />
+              <h3 className="text-lg font-semibold">Solution Expiration</h3>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Track your Butterfly Pea solution expiration date
+            </p>
+
+            <div className="space-y-2">
+              <Label htmlFor="solutionExpirationDate">Expiration Date</Label>
+              <Input
+                id="solutionExpirationDate"
+                type="date"
+                value={solutionExpirationDate}
+                onChange={(e) => setSolutionExpirationDate(e.target.value)}
+                className={errors.solutionExpirationDate ? "border-destructive" : ""}
+              />
+              {errors.solutionExpirationDate && (
+                <p className="text-sm text-destructive">{errors.solutionExpirationDate}</p>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSaveSolutionExpiration} className="flex-1">
+                Save Date
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleClearSolutionExpiration}
+                className="flex-1"
               >
                 Clear
               </Button>

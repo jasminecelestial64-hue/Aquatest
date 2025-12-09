@@ -1,32 +1,48 @@
 import { useState } from "react";
-import { Camera, Settings, History, Info, AlertTriangle, Clock } from "lucide-react";
+import { Camera, Settings, History, Info, AlertTriangle, Clock, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CameraCapture } from "@/components/CameraCapture";
+import { ImageUpload } from "@/components/ImageUpload";
 import { TestResult, TestResultData } from "@/components/TestResult";
 import { TestHistory } from "@/components/TestHistory";
 import { TestCharts } from "@/components/TestCharts";
 import { CalibrationMode } from "@/components/CalibrationMode";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { KnowledgeBase } from "@/components/KnowledgeBase";
 import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
-import { isTestStripExpired, isTestStripExpiringSoon, getDaysUntilExpiration, getTestStripInfo } from "@/utils/testStripService";
+import {
+  isTestStripExpired,
+  isTestStripExpiringSoon,
+  getDaysUntilExpiration,
+  getTestStripInfo,
+  isSolutionExpired,
+  isSolutionExpiringSoon,
+  getSolutionDaysUntilExpiration,
+  getSolutionInfo
+} from "@/utils/testStripService";
 import { useToast } from "@/hooks/use-toast";
+import { useNotifications } from "@/context/NotificationContext";
+import { NotificationCenter } from "@/components/NotificationCenter";
 import { format } from "date-fns";
 
 const Index = () => {
   const [showCamera, setShowCamera] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentResult, setCurrentResult] = useState<TestResultData | null>(null);
   const [testHistory, setTestHistory] = useState<TestResultData[]>([]);
   const [showCalibration, setShowCalibration] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const { toast } = useToast();
+  const { addNotification } = useNotifications();
 
   const handleCapture = async (imageData: string) => {
     setShowCamera(false);
-    
+    setShowUpload(false);
+
     // Check test strip expiration before analyzing
     if (isTestStripExpired()) {
       toast({
@@ -36,16 +52,26 @@ const Index = () => {
       });
       return;
     }
-    
+
+    // Check solution expiration before analyzing
+    if (isSolutionExpired()) {
+      toast({
+        title: "Solution Expired",
+        description: "Your Butterfly Pea solution has expired. Please prepare a fresh batch for accurate results.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsAnalyzing(true);
 
     try {
       // Apply white balance correction for better accuracy
       const correctedImage = await applyWhiteBalanceCorrection(imageData);
-      
+
       // Analyze with Roboflow model
       const result = await analyzeImage(correctedImage);
-      
+
       const testResult: TestResultData = {
         ...result,
         timestamp: new Date(),
@@ -54,6 +80,17 @@ const Index = () => {
 
       setCurrentResult(testResult);
       setTestHistory(prev => [testResult, ...prev]);
+
+      // Add notification based on result
+      if (result.level === "safe") {
+        addNotification("success", "Test Complete", `Ammonia level is safe (${result.concentration.toFixed(2)} ppm)`);
+      } else if (result.level === "elevated") {
+        addNotification("warning", "Elevated Level Detected", `Ammonia level is elevated (${result.concentration.toFixed(2)} ppm) - monitor closely`);
+      } else if (result.level === "high") {
+        addNotification("warning", "High Level Detected", `Ammonia level is high (${result.concentration.toFixed(2)} ppm) - immediate action required!`);
+      } else {
+        addNotification("error", "Critical Level Detected", `Ammonia level is CRITICAL (${result.concentration.toFixed(2)} ppm)! Urgent intervention needed!`);
+      }
 
       if (!isConfigured()) {
         toast({
@@ -89,7 +126,7 @@ const Index = () => {
     link.download = `ammonia-test-history-${new Date().toISOString()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    
+
     toast({
       title: "Export Complete",
       description: "Test history downloaded successfully",
@@ -124,11 +161,11 @@ const Index = () => {
               <AlertTriangle className="h-4 w-4" />
               <AlertTitle>Test Strips Expired</AlertTitle>
               <AlertDescription>
-                Your test strips expired on {getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}. 
-                Please replace them for accurate results. 
-                <Button 
-                  variant="link" 
-                  className="p-0 h-auto ml-1 text-destructive underline" 
+                Your test strips expired on {getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}.
+                Please replace them for accurate results.
+                <Button
+                  variant="link"
+                  className="p-0 h-auto ml-1 text-destructive underline"
                   onClick={() => setShowSettings(true)}
                 >
                   Update expiration date
@@ -136,19 +173,49 @@ const Index = () => {
               </AlertDescription>
             </Alert>
           )}
-          
+
           {!isTestStripExpired() && isTestStripExpiringSoon() && (
             <Alert className="mb-4 border-amber-500/50 bg-amber-500/10">
               <Clock className="h-4 w-4 text-amber-500" />
               <AlertTitle className="text-amber-500">Test Strips Expiring Soon</AlertTitle>
               <AlertDescription className="text-amber-600">
-                Your test strips will expire in {getDaysUntilExpiration()} day{getDaysUntilExpiration() !== 1 ? 's' : ''} 
-                ({getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}). 
+                Your test strips will expire in {getDaysUntilExpiration()} day{getDaysUntilExpiration() !== 1 ? 's' : ''}
+                ({getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}).
                 Consider ordering replacements.
               </AlertDescription>
             </Alert>
           )}
-          
+
+          {isSolutionExpired() && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Solution Expired</AlertTitle>
+              <AlertDescription>
+                Your Butterfly Pea solution expired on {getSolutionInfo() && format(new Date(getSolutionInfo()!.expirationDate), "MMM dd, yyyy")}.
+                Please prepare a fresh batch.
+                <Button
+                  variant="link"
+                  className="p-0 h-auto ml-1 text-destructive underline"
+                  onClick={() => setShowSettings(true)}
+                >
+                  Update expiration date
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {!isSolutionExpired() && isSolutionExpiringSoon() && (
+            <Alert className="mb-4 border-amber-500/50 bg-amber-500/10">
+              <Clock className="h-4 w-4 text-amber-500" />
+              <AlertTitle className="text-amber-500">Solution Expiring Soon</AlertTitle>
+              <AlertDescription className="text-amber-600">
+                Your solution will expire in {getSolutionDaysUntilExpiration()} day{getSolutionDaysUntilExpiration() !== 1 ? 's' : ''}
+                ({getSolutionInfo() && format(new Date(getSolutionInfo()!.expirationDate), "MMM dd, yyyy")}).
+                Prepare to make a fresh batch soon.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-gradient-ocean flex items-center justify-center">
@@ -159,13 +226,16 @@ const Index = () => {
                 <p className="text-xs text-muted-foreground">AI-Powered Ammonia Detection</p>
               </div>
             </div>
-            <Button 
-              variant="outline" 
-              size="icon"
-              onClick={() => setShowSettings(true)}
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center gap-2">
+              <NotificationCenter />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setShowSettings(true)}
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+            </div>
           </div>
         </div>
       </header>
@@ -187,7 +257,7 @@ const Index = () => {
         ) : currentResult ? (
           <div className="space-y-6">
             <TestResult result={currentResult} />
-            
+
             <div className="flex gap-3">
               <Button
                 size="lg"
@@ -209,12 +279,16 @@ const Index = () => {
             </div>
 
             <Tabs defaultValue="history" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="history">History</TabsTrigger>
+                <TabsTrigger value="knowledge">Learn</TabsTrigger>
                 <TabsTrigger value="info">About</TabsTrigger>
               </TabsList>
               <TabsContent value="history">
                 <TestHistory tests={testHistory} onExport={handleExport} />
+              </TabsContent>
+              <TabsContent value="knowledge">
+                <KnowledgeBase />
               </TabsContent>
               <TabsContent value="info">
                 <Card className="shadow-soft">
@@ -258,7 +332,7 @@ const Index = () => {
                       Professional ammonia testing powered by AI
                     </p>
                   </div>
-                  
+
                   {!isConfigured() && (
                     <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 text-left">
                       <div className="flex gap-3">
@@ -282,7 +356,17 @@ const Index = () => {
                     <Camera className="mr-2 h-5 w-5" />
                     Start New Test
                   </Button>
-                  
+
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={() => setShowUpload(true)}
+                    className="w-full shadow-sm hover:shadow-md transition-all"
+                  >
+                    <Upload className="mr-2 h-5 w-5" />
+                    Upload Image
+                  </Button>
+
                   <Button
                     size="lg"
                     variant="outline"
@@ -347,6 +431,13 @@ const Index = () => {
         <CameraCapture
           onCapture={handleCapture}
           onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {showUpload && (
+        <ImageUpload
+          onCapture={handleCapture}
+          onClose={() => setShowUpload(false)}
         />
       )}
     </div>
