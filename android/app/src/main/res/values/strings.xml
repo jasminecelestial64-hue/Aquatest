@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">AmmoniaSense</string>
+    <string name="title_activity_main">AmmoniaSense</string>
+    <string name="package_name">io.ammoniasense.app</string>
+    <string name="custom_url_scheme">io.ammoniasense.app</string>
+</resources>

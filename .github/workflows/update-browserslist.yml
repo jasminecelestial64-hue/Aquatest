@@ -1,0 +1,44 @@
+name: Update Browserslist DB
+
+on:
+  schedule:
+    - cron: '0 2 * * 1' # Run at 2:00 AM every Monday
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-browserslist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Update Browserslist DB
+        run: |
+          rm -f bun.lockb
+          npm run update-browserslist
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update browserslist db"
+          title: "chore: update browserslist db"
+          body: |
+            Automated update of browserslist-db.
+            
+            This PR updates the `browserslist-db` and runs post-update tasks.
+          branch: update-browserslist-db
+          delete-branch: true

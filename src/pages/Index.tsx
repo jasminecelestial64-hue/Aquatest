@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Camera, Settings, History, Info, AlertTriangle, Clock, Upload } from "lucide-react";
+import { Camera, Settings, History, Info, AlertTriangle, Clock, Upload, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,6 +25,7 @@ import {
 } from "@/utils/testStripService";
 import { useToast } from "@/hooks/use-toast";
 import { useNotifications } from "@/context/NotificationContext";
+import { useAuth } from "@/context/AuthContext";
 import { NotificationCenter } from "@/components/NotificationCenter";
 import { format } from "date-fns";
 
@@ -38,6 +39,7 @@ const Index = () => {
   const [showSettings, setShowSettings] = useState(false);
   const { toast } = useToast();
   const { addNotification } = useNotifications();
+  const { logout } = useAuth();
 
   const handleCapture = async (imageData: string) => {
     setShowCamera(false);
@@ -234,6 +236,14 @@ const Index = () => {
                 onClick={() => setShowSettings(true)}
               >
                 <Settings className="h-5 w-5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => logout()}
+                title="Log Out"
+              >
+                <LogOut className="h-5 w-5" />
               </Button>
             </div>
           </div>
