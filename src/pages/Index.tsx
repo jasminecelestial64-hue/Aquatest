@@ -1,118 +1,103 @@
-import { useState } from "react";
-import { Camera, Settings, History, Info, AlertTriangle, Clock, Upload, LogOut } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Camera, Upload, Image as ImageIcon, Bell, Loader2, Info, CheckCircle2, AlertCircle, LogOut, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { CameraCapture } from "@/components/CameraCapture";
-import { ImageUpload } from "@/components/ImageUpload";
-import { TestResult, TestResultData } from "@/components/TestResult";
 import { TestHistory } from "@/components/TestHistory";
-import { TestCharts } from "@/components/TestCharts";
-import { CalibrationMode } from "@/components/CalibrationMode";
+import { TestResult, TestResultData } from "@/components/TestResult";
 import { SettingsPanel } from "@/components/SettingsPanel";
-import { KnowledgeBase } from "@/components/KnowledgeBase";
-import { analyzeImage, applyWhiteBalanceCorrection, isConfigured } from "@/utils/roboflowService";
-import {
-  isTestStripExpired,
-  isTestStripExpiringSoon,
-  getDaysUntilExpiration,
-  getTestStripInfo,
-  isSolutionExpired,
-  isSolutionExpiringSoon,
-  getSolutionDaysUntilExpiration,
-  getSolutionInfo
-} from "@/utils/testStripService";
+import { Layout } from "@/components/Layout";
+import { runInference, drawDetections } from "@/utils/onnxService";
 import { useToast } from "@/hooks/use-toast";
 import { useNotifications } from "@/context/NotificationContext";
 import { useAuth } from "@/context/AuthContext";
-import { NotificationCenter } from "@/components/NotificationCenter";
-import { format } from "date-fns";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 const Index = () => {
+  const [view, setView] = useState<'home' | 'settings' | 'history'>('home');
   const [showCamera, setShowCamera] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentResult, setCurrentResult] = useState<TestResultData | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
   const [testHistory, setTestHistory] = useState<TestResultData[]>([]);
-  const [showCalibration, setShowCalibration] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [showTips, setShowTips] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const { toast } = useToast();
+  const { notifications, unreadCount, markAllAsRead, clearAll } = useNotifications();
   const { addNotification } = useNotifications();
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
 
-  const handleCapture = async (imageData: string) => {
+  useEffect(() => {
+    if (currentResult && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        drawDetections(canvas, currentResult.detections);
+      };
+      img.src = currentResult.imageUrl!;
+    }
+  }, [currentResult, view]);
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const imageData = reader.result as string;
+        handleAnalyze(imageData);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCapture = (imageData: string) => {
     setShowCamera(false);
-    setShowUpload(false);
+    handleAnalyze(imageData);
+  };
 
-    // Check test strip expiration before analyzing
-    if (isTestStripExpired()) {
-      toast({
-        title: "Test Strips Expired",
-        description: "Your test strips have expired. Please replace them for accurate results.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Check solution expiration before analyzing
-    if (isSolutionExpired()) {
-      toast({
-        title: "Solution Expired",
-        description: "Your Butterfly Pea solution has expired. Please prepare a fresh batch for accurate results.",
-        variant: "destructive",
-      });
-      return;
-    }
-
+  const handleAnalyze = async (imageData: string) => {
     setIsAnalyzing(true);
-
+    setCurrentResult(null);
     try {
-      // Apply white balance correction for better accuracy
-      const correctedImage = await applyWhiteBalanceCorrection(imageData);
-
-      // Analyze with Roboflow model
-      const result = await analyzeImage(correctedImage);
-
+      const result = await runInference(imageData);
       const testResult: TestResultData = {
         ...result,
         timestamp: new Date(),
         imageUrl: imageData,
       };
-
       setCurrentResult(testResult);
       setTestHistory(prev => [testResult, ...prev]);
 
-      // Add notification based on result
-      if (result.level === "safe") {
-        addNotification("success", "Test Complete", `Ammonia level is safe (${result.concentration.toFixed(2)} ppm)`);
-      } else if (result.level === "elevated") {
-        addNotification("warning", "Elevated Level Detected", `Ammonia level is elevated (${result.concentration.toFixed(2)} ppm) - monitor closely`);
-      } else if (result.level === "high") {
-        addNotification("warning", "High Level Detected", `Ammonia level is high (${result.concentration.toFixed(2)} ppm) - immediate action required!`);
-      } else {
-        addNotification("error", "Critical Level Detected", `Ammonia level is CRITICAL (${result.concentration.toFixed(2)} ppm)! Urgent intervention needed!`);
-      }
+      toast({
+        title: "Analysis complete!",
+        description: `Ammonia level: ${result.level} (${result.concentration.toFixed(2)} ppm)`,
+      });
 
-      if (!isConfigured()) {
-        toast({
-          title: "Demo Mode",
-          description: "Using mock data. Configure Roboflow API to get real results.",
-          variant: "default",
-        });
+      if (result.level === "safe") {
+        addNotification("success", "Safe", "Ammonia level is safe.");
+      } else if (result.level === "elevated") {
+        addNotification("warning", "Elevated", "Ammonia level is elevated.");
       } else {
-        toast({
-          title: "Analysis Complete",
-          description: `Ammonia level: ${result.level.toUpperCase()}`,
-          variant: result.level === "safe" ? "default" : "destructive",
-        });
+        addNotification("error", "High/Critical", `Ammonia level is ${result.level}!`);
       }
-    } catch (error) {
-      console.error("Analysis error:", error);
+    } catch (error: any) {
       toast({
         title: "Analysis Failed",
-        description: "Failed to analyze image. Please try again.",
-        variant: "destructive",
+        description: error.message || "Failed to analyze image",
+        variant: "destructive"
       });
     } finally {
       setIsAnalyzing(false);
@@ -125,332 +110,284 @@ const Index = () => {
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `ammonia-test-history-${new Date().toISOString()}.json`;
+    link.download = `aquatest-history-${new Date().toISOString()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-
     toast({
       title: "Export Complete",
       description: "Test history downloaded successfully",
     });
   };
 
-  if (showSettings) {
-    return <SettingsPanel onClose={() => setShowSettings(false)} />;
-  }
+  const renderContent = () => {
+    if (view === 'settings') return <SettingsPanel onClose={() => setView('home')} />;
+    if (view === 'history') return <TestHistory tests={testHistory} onExport={handleExport} />;
 
-  if (showCalibration) {
-    return <CalibrationMode onClose={() => setShowCalibration(false)} />;
-  }
-
-  if (showCamera) {
+    // Home view - matching screenshot
     return (
-      <CameraCapture
-        onCapture={handleCapture}
-        onClose={() => setShowCamera(false)}
-      />
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4">
-          {/* Test Strip Expiration Warnings */}
-          {isTestStripExpired() && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Test Strips Expired</AlertTitle>
-              <AlertDescription>
-                Your test strips expired on {getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}.
-                Please replace them for accurate results.
-                <Button
-                  variant="link"
-                  className="p-0 h-auto ml-1 text-destructive underline"
-                  onClick={() => setShowSettings(true)}
-                >
-                  Update expiration date
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {!isTestStripExpired() && isTestStripExpiringSoon() && (
-            <Alert className="mb-4 border-amber-500/50 bg-amber-500/10">
-              <Clock className="h-4 w-4 text-amber-500" />
-              <AlertTitle className="text-amber-500">Test Strips Expiring Soon</AlertTitle>
-              <AlertDescription className="text-amber-600">
-                Your test strips will expire in {getDaysUntilExpiration()} day{getDaysUntilExpiration() !== 1 ? 's' : ''}
-                ({getTestStripInfo() && format(new Date(getTestStripInfo()!.expirationDate), "MMM dd, yyyy")}).
-                Consider ordering replacements.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {isSolutionExpired() && (
-            <Alert variant="destructive" className="mb-4">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Solution Expired</AlertTitle>
-              <AlertDescription>
-                Your Butterfly Pea solution expired on {getSolutionInfo() && format(new Date(getSolutionInfo()!.expirationDate), "MMM dd, yyyy")}.
-                Please prepare a fresh batch.
-                <Button
-                  variant="link"
-                  className="p-0 h-auto ml-1 text-destructive underline"
-                  onClick={() => setShowSettings(true)}
-                >
-                  Update expiration date
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {!isSolutionExpired() && isSolutionExpiringSoon() && (
-            <Alert className="mb-4 border-amber-500/50 bg-amber-500/10">
-              <Clock className="h-4 w-4 text-amber-500" />
-              <AlertTitle className="text-amber-500">Solution Expiring Soon</AlertTitle>
-              <AlertDescription className="text-amber-600">
-                Your solution will expire in {getSolutionDaysUntilExpiration()} day{getSolutionDaysUntilExpiration() !== 1 ? 's' : ''}
-                ({getSolutionInfo() && format(new Date(getSolutionInfo()!.expirationDate), "MMM dd, yyyy")}).
-                Prepare to make a fresh batch soon.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-ocean flex items-center justify-center">
-                <Camera className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-foreground">AquaTest Pro</h1>
-                <p className="text-xs text-muted-foreground">AI-Powered Ammonia Detection</p>
-              </div>
+      <div className="h-full flex flex-col">
+        {/* Top bar with notification and user */}
+        <div className="flex justify-end items-center p-4 gap-4">
+          <div className="flex items-center gap-3 bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm px-4 py-2 rounded-full border border-white/40 dark:border-slate-700 shadow-sm">
+            <div className="flex flex-col items-end">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Account</span>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[150px]">{user?.email || 'Guest User'}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <NotificationCenter />
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setShowSettings(true)}
-              >
-                <Settings className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => logout()}
-                title="Log Out"
-              >
-                <LogOut className="h-5 w-5" />
-              </Button>
-            </div>
+            <Avatar className="h-8 w-8 border-2 border-cyan-200 dark:border-cyan-800">
+              <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500 text-white text-xs">
+                {user?.email?.charAt(0).toUpperCase() || 'G'}
+              </AvatarFallback>
+            </Avatar>
           </div>
-        </div>
-      </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-6 max-w-4xl">
-        {isAnalyzing ? (
-          <Card className="shadow-medium">
-            <CardContent className="py-12">
-              <div className="text-center space-y-4">
-                <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-                <div>
-                  <p className="text-lg font-semibold text-foreground">Analyzing Image</p>
-                  <p className="text-sm text-muted-foreground mt-1">Processing with AI model...</p>
-                </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" className="relative bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm rounded-full border border-white/40 dark:border-slate-700 shadow-sm hover:bg-white/80 dark:hover:bg-slate-700">
+                <Bell className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full animate-pulse border-2 border-white dark:border-slate-900"></span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-0 overflow-hidden translate-y-2 border-slate-200 dark:border-slate-800" align="end">
+              <div className="bg-slate-50 dark:bg-slate-900 px-4 py-3 border-b dark:border-slate-800 flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
+                {unreadCount > 0 && (
+                  <Button variant="ghost" size="sm" onClick={() => markAllAsRead()} className="h-auto p-0 text-[10px] text-cyan-600 dark:text-cyan-400 hover:bg-transparent">
+                    Mark all read
+                  </Button>
+                )}
               </div>
-            </CardContent>
-          </Card>
-        ) : currentResult ? (
-          <div className="space-y-6">
-            <TestResult result={currentResult} />
+              <ScrollArea className="h-[300px]">
+                {notifications.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 dark:text-slate-600">
+                    <Bell className="h-8 w-8 mx-auto mb-2 opacity-20" />
+                    <p className="text-xs">No notifications yet</p>
+                  </div>
+                ) : (
+                  <div className="divide-y dark:divide-slate-800">
+                    {notifications.map((n) => (
+                      <div key={n.id} className={cn("p-4 transition-colors", !n.read ? "bg-cyan-50/50 dark:bg-cyan-900/10" : "hover:bg-slate-50 dark:hover:bg-slate-900/50")}>
+                        <div className="flex gap-3">
+                          <div className={cn("w-2 h-2 mt-1.5 rounded-full shrink-0",
+                            n.type === 'success' ? 'bg-green-500' :
+                              n.type === 'warning' ? 'bg-amber-500' :
+                                n.type === 'error' ? 'bg-red-500' : 'bg-blue-500'
+                          )} />
+                          <div className="flex-1">
+                            <p className="font-semibold text-xs text-slate-800 dark:text-slate-100">{n.title}</p>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed mt-0.5">{n.message}</p>
+                            <p className="text-[9px] text-slate-400 dark:text-slate-500 mt-2">{new Date(n.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </ScrollArea>
+              {notifications.length > 0 && (
+                <div className="p-2 border-t dark:border-slate-800 text-center">
+                  <Button variant="ghost" size="sm" onClick={() => clearAll()} className="w-full h-8 text-[10px] text-slate-400 hover:text-red-500">
+                    Clear All
+                  </Button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
 
-            <div className="flex gap-3">
-              <Button
-                size="lg"
-                onClick={() => setShowCamera(true)}
-                className="flex-1 bg-gradient-ocean border-0"
-              >
-                <Camera className="mr-2 h-5 w-5" />
-                Test Again
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={() => setCurrentResult(null)}
-                className="flex-1"
-              >
-                <History className="mr-2 h-5 w-5" />
-                View History
-              </Button>
-            </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => logout()}
+            className="bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm rounded-full border border-slate-200 dark:border-slate-700 shadow-sm hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 transition-colors"
+            title="Logout"
+          >
+            <LogOut className="h-5 w-5" />
+          </Button>
+        </div>
 
-            <Tabs defaultValue="history" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="history">History</TabsTrigger>
-                <TabsTrigger value="knowledge">Learn</TabsTrigger>
-                <TabsTrigger value="info">About</TabsTrigger>
-              </TabsList>
-              <TabsContent value="history">
-                <TestHistory tests={testHistory} onExport={handleExport} />
-              </TabsContent>
-              <TabsContent value="knowledge">
-                <KnowledgeBase />
-              </TabsContent>
-              <TabsContent value="info">
-                <Card className="shadow-soft">
-                  <CardContent className="pt-6 space-y-4">
-                    <div>
-                      <h3 className="font-semibold text-foreground mb-2">How It Works</h3>
-                      <p className="text-sm text-muted-foreground">
-                        AquaTest Pro uses advanced computer vision to analyze color changes in ammonia test strips.
-                        Simply capture a photo of your test strip, and our AI model will provide instant results.
-                      </p>
+        {/* Main content area - 2 column layout */}
+        <div className="flex-1 flex items-center justify-center px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 w-full max-w-6xl">
+            {/* Left side - Main content */}
+            <div className="flex flex-col items-center justify-center space-y-8 text-center lg:text-left">
+              {showTips && (
+                <Card className="w-full bg-cyan-500/10 dark:bg-cyan-900/10 border-cyan-200 dark:border-cyan-800 shadow-none animate-in fade-in slide-in-from-top-4 duration-500 relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-cyan-200 dark:hover:bg-cyan-800" onClick={() => setShowTips(false)}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <CardContent className="p-4 flex gap-4">
+                    <div className="bg-cyan-100 dark:bg-cyan-900/50 p-2 rounded-lg h-fit">
+                      <Info className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
                     </div>
-                    <div>
-                      <h3 className="font-semibold text-foreground mb-2">Tips for Accurate Results</h3>
-                      <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                        <li>Use good lighting conditions</li>
-                        <li>Align the test strip within the camera guides</li>
-                        <li>Ensure the strip is fully visible</li>
-                        <li>Wait for color to fully develop before testing</li>
-                        <li>Keep the camera steady during capture</li>
-                      </ul>
+                    <div className="space-y-1 text-left">
+                      <p className="font-bold text-cyan-800 dark:text-cyan-200 text-sm">Session Tip: Better Analysis</p>
+                      <p className="text-xs text-cyan-700 dark:text-cyan-300 leading-relaxed">
+                        For accurate results, ensure your sample is well-lit and the test strip is held flat against a solid background. Avoid shadows and glare on the water surface.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Welcome Card */}
-            <Card className="shadow-medium border-2 border-primary/20">
-              <CardContent className="pt-6">
-                <div className="text-center space-y-4">
-                  <div className="w-20 h-20 mx-auto rounded-2xl bg-gradient-ocean flex items-center justify-center shadow-strong">
-                    <Camera className="h-10 w-10 text-white" />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-foreground mb-2">
-                      Welcome to AquaTest Pro
-                    </h2>
-                    <p className="text-muted-foreground">
-                      Professional ammonia testing powered by AI
-                    </p>
-                  </div>
+              )}
+              <h1 className="text-5xl lg:text-7xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600 dark:from-white dark:to-slate-400">AquaTest</h1>
 
-                  {!isConfigured() && (
-                    <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 text-left">
-                      <div className="flex gap-3">
-                        <Info className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
-                        <div className="text-sm">
-                          <p className="font-semibold text-warning mb-1">Demo Mode</p>
-                          <p className="text-muted-foreground">
-                            Configure your Roboflow API key in settings to use your trained model.
-                            Currently showing demo results.
-                          </p>
+              <div className="flex gap-4">
+                <Button
+                  size="lg"
+                  onClick={() => setShowCamera(true)}
+                  className="h-14 px-8 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white shadow-lg"
+                >
+                  <Camera className="mr-2 h-5 w-5" />
+                  Capture Analysis
+                </Button>
+
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="h-14 px-8 rounded-full border-2 border-slate-300 hover:bg-slate-50"
+                >
+                  <Upload className="mr-2 h-5 w-5" />
+                  Upload
+                </Button>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  ref={fileInputRef}
+                  onChange={handleFileSelect}
+                />
+              </div>
+            </div>
+
+            {/* Right side - Analysis card */}
+            <div className="flex items-center justify-center">
+              {isAnalyzing ? (
+                <Card className="w-full max-w-md shadow-lg h-[400px]">
+                  <CardContent className="h-full flex flex-col items-center justify-center text-center space-y-4">
+                    <Loader2 className="h-12 w-12 text-cyan-500 animate-spin" />
+                    <div>
+                      <p className="font-semibold text-slate-800">Analyzing Image...</p>
+                      <p className="text-sm text-slate-500">Wait a moment while we process the water sample.</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : currentResult ? (
+                <Card className="w-full max-w-md shadow-lg overflow-hidden animate-in fade-in zoom-in duration-300">
+                  <div className="relative group cursor-pointer" onClick={() => setShowReasoning(!showReasoning)}>
+                    <canvas
+                      ref={canvasRef}
+                      className="w-full h-48 object-cover border-b"
+                      title="Click to see why this image was accepted"
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                      <Info className="text-white opacity-0 group-hover:opacity-100 h-8 w-8" />
+                    </div>
+                    {showReasoning && (
+                      <div className="absolute inset-0 bg-white/95 p-6 flex flex-col items-center justify-center text-center animate-in slide-in-from-bottom duration-200 overflow-y-auto">
+                        <CheckCircle2 className="h-8 w-8 text-green-500 mb-2" />
+                        <p className="font-bold text-slate-800">Inference Details</p>
+                        <div className="text-xs text-slate-600 space-y-2 mt-2">
+                          <p>We found <span className="font-bold text-cyan-600">{currentResult.detections.length}</span> potential markers in this image.</p>
+                          <p>The primary signal detected was <span className="font-bold text-slate-800 capitalize">{currentResult.level}</span> level ammonia with <span className="font-bold text-slate-800">{currentResult.confidence}%</span> certainty.</p>
+                          <p className="italic border-t pt-2">Reasoning: Color profile significantly matches {currentResult.level} reference benchmarks after ambient light calibration.</p>
                         </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-4 text-xs font-semibold hover:bg-slate-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowReasoning(false);
+                          }}
+                        >
+                          Close Explanation
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  <CardContent className="p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Latest Result</p>
+                        <p className="text-2xl font-bold text-slate-800 capitalize">{currentResult.level}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Confidence</p>
+                        <p className="text-xl font-semibold text-cyan-600">{currentResult.confidence}%</p>
                       </div>
                     </div>
-                  )}
 
-                  <Button
-                    size="lg"
-                    onClick={() => setShowCamera(true)}
-                    className="w-full bg-gradient-ocean border-0 shadow-medium hover:shadow-strong transition-all"
-                  >
-                    <Camera className="mr-2 h-5 w-5" />
-                    Start New Test
-                  </Button>
-
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    onClick={() => setShowUpload(true)}
-                    className="w-full shadow-sm hover:shadow-md transition-all"
-                  >
-                    <Upload className="mr-2 h-5 w-5" />
-                    Upload Image
-                  </Button>
-
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    onClick={() => setShowCalibration(true)}
-                    className="w-full"
-                  >
-                    <Settings className="mr-2 h-5 w-5" />
-                    Calibration Mode
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* History Section */}
-            {testHistory.length > 0 && (
-              <>
-                <TestCharts tests={testHistory} />
-                <TestHistory tests={testHistory} onExport={handleExport} />
-              </>
-            )}
-
-            {/* Info Cards */}
-            <div className="grid md:grid-cols-2 gap-4">
-              <Card className="shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
-                      <Info className="h-5 w-5 text-success" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-foreground mb-1">Quick & Accurate</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Get instant results with lab-grade accuracy using AI-powered analysis
+                    <div className="p-3 bg-slate-50 rounded-lg flex items-center gap-3">
+                      <div className={`w-3 h-3 rounded-full ${currentResult.level === 'safe' ? 'bg-green-500' :
+                        currentResult.level === 'elevated' ? 'bg-amber-500' : 'bg-red-500'
+                        }`} />
+                      <p className="text-sm font-medium text-slate-700">
+                        {currentResult.concentration.toFixed(2)} ppm ammonia detected
                       </p>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
 
-              <Card className="shadow-soft">
-                <CardContent className="pt-6">
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      <History className="h-5 w-5 text-primary" />
+                    <div className="flex gap-2">
+                      <Dialog open={showDetails} onOpenChange={setShowDetails}>
+                        <DialogTrigger asChild>
+                          <Button className="flex-1 rounded-full bg-slate-800 hover:bg-slate-900 text-white">
+                            View Details
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                          <DialogHeader>
+                            <DialogTitle>Full Analysis Result</DialogTitle>
+                          </DialogHeader>
+                          <div className="mt-4">
+                            <TestResult result={currentResult} />
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+
+                      <Button
+                        variant="outline"
+                        className="rounded-full px-4"
+                        onClick={() => setCurrentResult(null)}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="w-full max-w-md shadow-lg h-[400px]">
+                  <CardContent className="h-full flex flex-col items-center justify-center text-center space-y-4">
+                    <div className="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center">
+                      <ImageIcon className="h-10 w-10 text-slate-400" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-foreground mb-1">Track Over Time</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Monitor trends and export your complete testing history
-                      </p>
+                      <p className="font-semibold text-slate-800 mb-1">No recent analysis</p>
+                      <p className="text-sm text-slate-500">Start by capturing or uploading a photo.</p>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
             </div>
           </div>
-        )}
-      </main>
+        </div>
+      </div>
+    );
+  };
 
-      {/* Camera Modal */}
+  return (
+    <Layout activeView={view} onNavigate={setView}>
+      {renderContent()}
+
       {showCamera && (
         <CameraCapture
           onCapture={handleCapture}
           onClose={() => setShowCamera(false)}
         />
       )}
-
-      {showUpload && (
-        <ImageUpload
-          onCapture={handleCapture}
-          onClose={() => setShowUpload(false)}
-        />
-      )}
-    </div>
+    </Layout>
   );
 };
 

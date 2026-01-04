@@ -33,17 +33,27 @@ const Login = () => {
         resolver: zodResolver(loginSchema),
     });
 
+    // Debug log on mount
+    console.log("Login component mounted");
+
     const onSubmit = async (data: LoginFormData) => {
+        console.log("Login attempt started for:", data.email);
         setIsLoading(true);
         try {
-            const { error } = await login(data.email, data.password);
+            console.log("Calling login function...");
+            const result = await login(data.email, data.password);
+            console.warn("Login function returned:", result); // warn to ensure visibility
+            const { error } = result;
+
             if (!error) {
+                console.warn("Login successful! (Redirecting...)");
                 toast({
                     title: "Welcome back!",
                     description: "You have successfully logged in.",
                 });
                 navigate("/");
             } else {
+                console.error("Login failed:", error);
                 toast({
                     title: "Login failed",
                     description: error.message || "Invalid email or password.",
@@ -51,6 +61,7 @@ const Login = () => {
                 });
             }
         } catch (error) {
+            console.error("Login error (catch block):", error);
             toast({
                 title: "Error",
                 description: "An error occurred during login.",
@@ -59,6 +70,10 @@ const Login = () => {
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const onError = (errors: any) => {
+        console.error("Form validation failed:", errors);
     };
 
     return (
@@ -76,7 +91,7 @@ const Login = () => {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                    <form onSubmit={handleSubmit(onSubmit, onError)} className="space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor="email">Email</Label>
                             <Input

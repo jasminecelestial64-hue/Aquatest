@@ -1,13 +1,9 @@
 import { AmmoniaLevel } from "@/components/TestResult";
-import { extractColorProfile, applyCalibration } from "./calibrationService";
+import { runInference } from "./onnxService";
+import { setRoboflowConfig as updateConfig, getRoboflowConfig as getConfig } from "./onnxService"; // If we want to keep config mock or remove it
 
-interface RoboflowConfig {
-  apiKey: string;
-  modelEndpoint: string;
-  modelVersion?: string;
-}
-
-interface RoboflowPrediction {
+// Keep types for backward compatibility if needed, though they aren't exported heavily
+export interface RoboflowPrediction {
   class: string;
   confidence: number;
   x: number;
@@ -16,56 +12,24 @@ interface RoboflowPrediction {
   height: number;
 }
 
-interface RoboflowResponse {
-  predictions: RoboflowPrediction[];
-  image: {
-    width: number;
-    height: number;
-  };
-}
+// We can keep these stubbed or remove if unused. The app checks allowConfig.
+// Local inference doesn't need API keys, so we can make isConfigured always true or remove the check.
+// For minimal friction, we'll make isConfigured always return true.
 
-const ROBOFLOW_CONFIG_KEY = "aquatest_roboflow_config";
+export const isConfigured = () => true;
 
-// Load config from localStorage on init
-let roboflowConfig: RoboflowConfig | null = null;
-
-const loadConfigFromStorage = () => {
-  try {
-    const stored = localStorage.getItem(ROBOFLOW_CONFIG_KEY);
-    if (stored) {
-      roboflowConfig = JSON.parse(stored);
-    }
-  } catch (error) {
-    console.error("Failed to load Roboflow config:", error);
-  }
+// These are now no-ops or deprecated but kept to prevent build errors if components call them
+// We can remove them if we are sure no one uses them, but safely redirecting is better.
+export const setRoboflowConfig = (config: any) => {
+  console.log("Roboflow config set (ignored for local inference)", config);
 };
 
-// Initialize config on module load
-loadConfigFromStorage();
-
-export const setRoboflowConfig = (config: RoboflowConfig) => {
-  roboflowConfig = config;
-  try {
-    if (config.apiKey && config.modelEndpoint) {
-      localStorage.setItem(ROBOFLOW_CONFIG_KEY, JSON.stringify(config));
-    } else {
-      localStorage.removeItem(ROBOFLOW_CONFIG_KEY);
-    }
-  } catch (error) {
-    console.error("Failed to save Roboflow config:", error);
-  }
-};
-
-export const getRoboflowConfig = (): RoboflowConfig | null => {
-  return roboflowConfig;
-};
-
-export const isConfigured = () => {
-  return roboflowConfig !== null && roboflowConfig.apiKey !== "" && roboflowConfig.modelEndpoint !== "";
+export const getRoboflowConfig = () => {
+  return { apiKey: "local", modelEndpoint: "local" };
 };
 
 /**
- * Analyzes an image using the Roboflow model
+ * Analyzes an image using the Local ONNX model (formerly Roboflow)
  * @param imageData Base64 encoded image data
  * @returns Analysis results with ammonia level and concentration
  */
@@ -73,116 +37,35 @@ export const analyzeImage = async (imageData: string): Promise<{
   level: AmmoniaLevel;
   concentration: number;
   confidence: number;
-  rawPredictions?: RoboflowPrediction[];
+  rawPredictions?: any[];
 }> => {
-  // If Roboflow is not configured, return mock data for testing
-  if (!isConfigured()) {
-    console.warn("Roboflow not configured, returning mock data");
-    return generateMockResult();
-  }
-
   try {
-    // Remove data URL prefix if present
-    const base64Image = imageData.replace(/^data:image\/\w+;base64,/, "");
+    const result = await runInference(imageData);
 
-    // Call Roboflow Hosted Inference API
-    const response = await fetch(
-      `${roboflowConfig!.modelEndpoint}?api_key=${roboflowConfig!.apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: base64Image,
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Roboflow API error: ${response.statusText}`);
-    }
-
-    const data: RoboflowResponse = await response.json();
-
-    // Process predictions and convert to ammonia concentration
-    const result = processPredictions(data.predictions);
-    
-    // Apply calibration correction if available
-    const colorProfile = await extractColorProfile(imageData);
-    const calibratedConcentration = applyCalibration(result.concentration, colorProfile);
-    
+    // Map onnxService result to expected format
     return {
-      ...result,
-      concentration: calibratedConcentration,
-      level: concentrationToLevel(calibratedConcentration),
+      level: result.level,
+      concentration: result.concentration,
+      confidence: result.confidence,
+      // Convert detections to "rawPredictions" format if components rely on it (e.g. for debugging overlay)
+      rawPredictions: result.detections.map(d => ({
+        class: d.label,
+        confidence: d.score,
+        x: d.box[0] + d.box[2] / 2, // Convert top-left back to center for compatibility if needed? 
+        // Actually, components likely use these generic props. 
+        // Let's check usage if we can, but for now we'll match the interface.
+        // Roboflow prediction: x,y is center. width, height.
+        // Our ONNX: box is [x, y, w, h] (top-left)
+        // So:
+        y: d.box[1] + d.box[3] / 2,
+        width: d.box[2],
+        height: d.box[3]
+      }))
     };
   } catch (error) {
     console.error("Error analyzing image:", error);
     throw error;
   }
-};
-
-/**
- * Processes Roboflow predictions and converts to ammonia metrics
- */
-const processPredictions = (predictions: RoboflowPrediction[]) => {
-  if (!predictions || predictions.length === 0) {
-    return {
-      level: "safe" as AmmoniaLevel,
-      concentration: 0,
-      confidence: 0,
-    };
-  }
-
-  // Get the highest confidence prediction
-  const topPrediction = predictions.reduce((prev, current) =>
-    current.confidence > prev.confidence ? current : prev
-  );
-
-  // Map class names to concentration values
-  // This mapping should be adjusted based on your actual model classes
-  const classToConcentration: Record<string, number> = {
-    "safe": 0.1,
-    "low": 0.2,
-    "elevated": 0.4,
-    "medium": 0.6,
-    "high": 0.8,
-    "critical": 1.2,
-    // Add more mappings based on your model's classes
-  };
-
-  const concentration = classToConcentration[topPrediction.class.toLowerCase()] || 0;
-  const level = concentrationToLevel(concentration);
-
-  return {
-    level,
-    concentration,
-    confidence: Math.round(topPrediction.confidence * 100),
-    rawPredictions: predictions,
-  };
-};
-
-/**
- * Converts concentration value to ammonia level category
- */
-const concentrationToLevel = (concentration: number): AmmoniaLevel => {
-  if (concentration <= 0.25) return "safe";
-  if (concentration <= 0.5) return "elevated";
-  if (concentration <= 1.0) return "high";
-  return "critical";
-};
-
-/**
- * Generates mock result for testing without Roboflow API
- */
-const generateMockResult = () => {
-  const mockConcentrations = [0.1, 0.15, 0.35, 0.65, 0.9, 1.3];
-  const concentration = mockConcentrations[Math.floor(Math.random() * mockConcentrations.length)];
-  
-  return {
-    level: concentrationToLevel(concentration),
-    concentration,
-    confidence: Math.floor(Math.random() * 15) + 85, // 85-100%
-  };
 };
 
 /**
@@ -195,7 +78,7 @@ export const applyWhiteBalanceCorrection = async (imageData: string): Promise<st
     img.onload = () => {
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
-      
+
       if (!ctx) {
         resolve(imageData);
         return;

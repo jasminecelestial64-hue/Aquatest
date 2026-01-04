@@ -2,6 +2,9 @@ import { AlertCircle, CheckCircle2, AlertTriangle, XCircle } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { DetectionResult, drawDetections } from "@/utils/onnxService";
+import { useEffect, useRef } from "react";
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip as RechartsTooltip, BarChart, Bar, XAxis, YAxis } from 'recharts';
 
 export type AmmoniaLevel = "safe" | "elevated" | "high" | "critical";
 
@@ -11,6 +14,7 @@ export interface TestResultData {
   confidence: number;
   timestamp: Date;
   imageUrl?: string;
+  detections: DetectionResult[];
 }
 
 interface TestResultProps {
@@ -59,9 +63,27 @@ const levelConfig = {
 export const TestResult = ({ result }: TestResultProps) => {
   const config = levelConfig[result.level];
   const Icon = config.icon;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (result.imageUrl && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        drawDetections(canvas, result.detections || []);
+      };
+      img.src = result.imageUrl;
+    }
+  }, [result]);
 
   return (
-    <Card className="shadow-medium border-2 border-border">
+    <Card className="shadow-medium border-2 border-border overflow-hidden">
       <CardHeader className={`${config.gradient} text-white rounded-t-lg`}>
         <div className="flex items-center justify-between">
           <CardTitle className="text-2xl font-bold flex items-center gap-2">
@@ -73,8 +95,15 @@ export const TestResult = ({ result }: TestResultProps) => {
           </Badge>
         </div>
       </CardHeader>
-      
+
       <CardContent className="pt-6 space-y-6">
+        {/* Analyzed Image Preview */}
+        {result.imageUrl && (
+          <div className="rounded-lg border overflow-hidden bg-slate-100 mb-4">
+            <canvas ref={canvasRef} className="w-full h-auto max-h-[300px] object-contain mx-auto" />
+          </div>
+        )}
+
         {/* Concentration Display */}
         <div className="text-center space-y-2">
           <p className="text-sm text-muted-foreground font-medium">Ammonia Concentration</p>
@@ -101,6 +130,36 @@ export const TestResult = ({ result }: TestResultProps) => {
           <p className={`text-sm font-medium ${config.color}`}>
             {config.description}
           </p>
+        </div>
+
+        {/* Result Visualization - Chart */}
+        <div className="pt-4 space-y-4">
+          <p className="text-sm font-semibold text-foreground">Detection Distribution:</p>
+          <div className="h-[200px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Confidence', value: result.confidence },
+                    { name: 'Other', value: 100 - result.confidence }
+                  ]}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  <Cell fill={result.level === 'safe' ? '#10B981' : result.level === 'elevated' ? '#F59E0B' : '#EF4444'} />
+                  <Cell fill="#E2E8F0" />
+                </Pie>
+                <RechartsTooltip />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none mt-12 lg:mt-16">
+              <span className="text-xl font-bold">{result.confidence}%</span>
+            </div>
+          </div>
         </div>
 
         {/* Recommendations */}
